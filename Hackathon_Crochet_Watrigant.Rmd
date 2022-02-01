@@ -1,0 +1,241 @@
+---
+title: "Hackaton_Crochet_Watrigant"
+author: "Albert de Watrigant"
+date: "11/12/2021"
+output: html_document
+---
+
+```{r echo=TRUE}
+data = read.csv(file='C:/Users/dewat/OneDrive/Documents/Machine Learning/data.csv/data.csv')
+test = read.csv(file='C:/Users/dewat/OneDrive/Documents/Machine Learning/data.csv/test.csv')
+```
+
+## Understand the datas
+
+
+```{r echo=TRUE}
+str(data)
+```
+```{r echo=TRUE}
+dim(data)
+```
+
+```{r echo=TRUE}
+dim(test)
+```
+
+
+```{r echo=TRUE}
+sum(is.na(data))
+```
+
+```{r echo=TRUE}
+data = na.omit(data)
+sum(is.na(data))
+```
+```{r echo=TRUE}
+hist(data$SeriousDlqin2yrs)
+```
+
+
+## Show the correlations between the variables
+
+```{r echo=TRUE}
+library(corrplot)
+M=cor(data)
+corrplot.mixed(M)
+```
+
+```{r echo=TRUE}
+best=abs(cor(data[ , colnames(data) !="SeriousDlqin2yrs"], data$SeriousDlqin2yrs))
+best_sorted=best[order(-best[,1]),]
+best_sorted
+```
+
+## PCA
+
+```{r echo=TRUE}
+library(FactoMineR)
+library(factoextra)
+#res.pca <- PCA(data[,-14],  graph = FALSE)
+res.pca <- prcomp(data[,-1], scale=TRUE)
+
+get_eig(res.pca)
+
+
+```
+
+```{r echo=TRUE}
+fviz_screeplot(res.pca, addlabels = TRUE, ylim = c(0, 35))
+```
+As we can see, the first dimensions explain less than 50% of the variance, so we will not use the PCA in order to predict variables
+
+
+```{r echo=TRUE}
+var <- get_pca_var(res.pca)
+head(var$coord)
+
+```
+
+```{r echo=TRUE}
+#fviz_pca_var(res.pca, col.var = "black")
+
+fviz_pca_var(res.pca, col.var="contrib",
+             gradient.cols = c("#00AFBB", "#E7B800", "#FC4E07"),
+             repel = TRUE # Avoid text overlapping
+)
+```
+
+
+
+```{r echo=TRUE}
+# Contributions of variables to PC1
+fviz_contrib(res.pca, choice = "var", axes = 1, top = 10)
+```
+
+```{r echo=TRUE}
+# Contributions of variables to PC2
+fviz_contrib(res.pca, choice = "var", axes = 2, top = 10)
+```
+
+
+```{r echo=TRUE}
+fviz_pca_ind(res.pca,  
+             habillage = data$SeriousDlqin2yrs,
+             addEllipses = TRUE,
+             ellipse.level=0.95,
+             repel = TRUE,
+             label="none",
+             geom="point",
+             
+             )
+```
+We didn't plot the biplot because it was illisible, we can see that group 1 depends on dim1
+
+
+### Split data in train and testing sets
+
+```{r echo=TRUE}
+library(caTools)
+set.seed(1234) 
+split = sample.split(data, SplitRatio = 0.75)
+train = subset(data, split == TRUE)
+testing = subset(data, split == FALSE)
+```
+
+## Scale the values
+
+```{r echo=TRUE}
+train[,colnames(train)!="SeriousDlqin2yrs"]=scale(train[,colnames(train)!="SeriousDlqin2yrs"])
+testing[,colnames(testing)!="SeriousDlqin2yrs"]=scale(testing[,colnames(testing)!="SeriousDlqin2yrs"])
+```
+
+## Our models
+
+```{r echo=TRUE}
+calc_acc = function(predicted, actual) {
+  mean(predicted == actual)
+}
+```
+
+# GLM
+
+We started by using a simple logistic regression. We had good results, which shows that sometimes nothing is better than simplicity.
+
+```{r echo=TRUE}
+classifier <- glm(formula = SeriousDlqin2yrs ~ ., family = binomial, data = train)
+pred_prob <- predict(classifier, testing, type = "response")
+pred <- ifelse(pred_prob>0.35, 1,0)
+
+glm_pred<-calc_acc(pred, testing$SeriousDlqin2yrs)
+glm_pred
+```
+New attributes for GLM
+
+After that, we have tried to keep only the variables well correlated with the target. For the first two variables, we thought of squaring them to increase the importance of the variations. This was not very significant.
+
+
+```{r echo=TRUE}
+classifier <- glm(formula = SeriousDlqin2yrs ~ RevolvingUtilizationOfUnsecuredLines**2 + NumberOfTime30_59DaysPastDueNotWorse**2 + NumberOfTimes90DaysLate + NumberOfTime60_89DaysPastDueNotWorse + log(age) + DebtRatio, family = binomial, data = train)
+pred_prob <- predict(classifier, testing, type = "response")
+pred <- ifelse(pred_prob>0.35, 1,0)
+
+calc_acc(pred, testing$SeriousDlqin2yrs)
+
+```
+
+# RPART
+
+Then we tried the decision tree algorithm. The results were consistent with the logistic regression.
+
+
+```{r echo=TRUE}
+library(rpart)
+classifier <- rpart(formula = SeriousDlqin2yrs ~ ., data = train)
+pred_prob <- predict(classifier, testing)
+pred <- ifelse(pred_prob>0.35, 1,0)
+
+rpart_pred<-calc_acc(pred, testing$SeriousDlqin2yrs)
+rpart_pred
+```
+
+# Random Forest 
+
+We tried to use Random Forest which is an algorithm known to have good results. However, its execution took too much time so we had to force its stop.
+
+
+```{r echo=TRUE}
+#library(randomForest)
+#forest = randomForest(SeriousDlqin2yrs ~ ., data = train, mtry = 3,
+#                        importance = TRUE, ntrees = 100)
+#forest
+#forest_pred =predict(forest, testing)
+#forest_pred = ifelse(forest_pred >= 0.5, 1,0)
+#acc_forest = calc_acc(forest_pred, testing$SeriousDlqin2yrs)
+```
+
+
+# Neural network
+
+We wanted to try neural networks to see if it would be effective in our case. Unfortunately, the algorithm is much too slow when there are many lines, so we could only test it with a small sample of the train set. Despite this disappointment, the results were good and with more time, we would have liked to try to run it on the whole dataset.
+
+
+```{r echo=TRUE}
+#install.packages("neuralnet")
+require(neuralnet)
+classifier <- neuralnet(formula = SeriousDlqin2yrs ~ .,data=train[0:10000,], hidden=3,act.fct = "logistic",linear.output = FALSE)
+
+pred_prob <- predict(classifier, testing)
+pred <- ifelse(pred_prob>0.35, 1,0)
+
+neural_pred<-calc_acc(pred, testing$SeriousDlqin2yrs)
+neural_pred
+```
+
+# GBM
+
+Finally, we ended up using the Gradient Boosting algorithm. This is the model that gave us the best performance.We tried many combinations of parameters to maximize our final results. The best distribution seemed to be the gaussian one.
+
+
+```{r echo=TRUE}
+library(gbm)
+boost = gbm(SeriousDlqin2yrs ~ . - NumberRealEstateLoansOrLines - NumberOfOpenCreditLinesAndLoans - NumberOfDependents, data = train , distribution = "gaussian", n.trees = 304, interaction.depth = 4, shrinkage = 0.0092)
+pred_prob <- predict(boost, testing)
+pred <- ifelse(pred_prob>0.5, 1,0)
+boost_pred<-calc_acc(pred, testing$SeriousDlqin2yrs)
+boost_pred
+
+```
+We also wanted to try the xgboost one but it works on matrix not dataframe, so we didn’t have the time to implement the change.
+
+
+```{r echo=TRUE}
+acc = data.frame(
+  Model = c("Single Tree", "Logistic Regression","Neural Network",  "Boosting"),
+  TestAccuracy = c(rpart_pred, glm_pred, neural_pred, boost_pred)
+  )
+knitr::kable(acc) 
+```
+
+
+
